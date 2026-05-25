@@ -61,6 +61,14 @@ body {
   justify-content: center;
   padding: 0 20px;
 }
+.virtualized-grid{
+  left: 10vw;
+}
+
+.grid-container div{
+  margin: auto;
+  
+}
 
 .virtualized-grid {
   border-radius: 12px;
