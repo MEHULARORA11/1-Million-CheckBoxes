@@ -6,6 +6,7 @@ import './App.css';
 
 const PORT = import.meta.env.VITE_PORT || 8000;
 const BASE_URL = import.meta.env.VITE_BACKEND_URL;
+console.log(BASE_URL)
 // console.log(BASE_URL)
 const socket = io(`/`, {
   transports: ['websocket']
