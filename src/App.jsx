@@ -82,7 +82,7 @@ function App() {
 
         const data = await response.json();
         console.log(data)
-        if (data.base64) {
+        if (data.base64 !== undefined) {
           const bytes = base64ToUint8Array(data.base64);
           for (let byteIndex = 0; byteIndex < bytes.length; byteIndex++) {
             const byte = bytes[byteIndex];
