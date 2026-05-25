@@ -77,10 +77,11 @@ function App() {
     async function getState() {
       try {
         const response = await fetch(`${BASE_URL}/checkboxes`);
-        console.log('fetched successfully');
+        console.log('fetched successfully',response);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
         const data = await response.json();
+        console.log(data)
         if (data.base64) {
           const bytes = base64ToUint8Array(data.base64);
           for (let byteIndex = 0; byteIndex < bytes.length; byteIndex++) {
