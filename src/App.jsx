@@ -7,7 +7,7 @@ import './App.css';
 const PORT = import.meta.env.VITE_PORT || 8000;
 const BASE_URL = import.meta.env.VITE_BACKEND_URL;
 // console.log(BASE_URL)
-const socket = io(`${BASE_URL}`, {
+const socket = io(`${BASE_URL}:${PORT}`, {
   transports: ['websocket']
 });
 
@@ -75,7 +75,7 @@ function App() {
   useEffect(() => {
     async function getState() {
       try {
-        const response = await fetch(`${BASE_URL}/checkboxes`);
+        const response = await fetch(`${BASE_URL}:${PORT}/checkboxes`);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
         const data = await response.json();

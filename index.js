@@ -6,6 +6,10 @@ import { CHECKBOX_COUNT, CHECKBOX_STATE_KEY, CHANNEL } from './constant.js'
 import { publisher, redis, subscriber } from './redis-connection.js'
 import 'dotenv/config'
 
+redis.on('error', err => console.error('Redis Error:', err));
+publisher.on('error', err => console.error('Publisher Error:', err));
+subscriber.on('error', err => console.error('Subscriber Error:', err));
+
 
 const FRONTEND_URL = process.env.VITE_FRONTEND_URL
 // console.log(FRONTEND_URL)
@@ -17,11 +21,14 @@ const FRONTEND_URL = process.env.VITE_FRONTEND_URL
 async function main() {
   const PORT = process.env.VITE_PORT
 
-  const app = express()
-  app.use(cors({
+  /**
+   * {
     credentials: true,
     origin: FRONTEND_URL,
-  }))
+  }
+   */
+  const app = express()
+  app.use(cors())
 
 
   app.get('/checkboxes', async (req, res) => {
@@ -39,13 +46,20 @@ async function main() {
       return res.status(500).json({ error: 'Failed to fetch checkboxes' });
     }
   })
-
+/**
+ *  cors: { // now by this syntax , we don't need io.attatch()
+      // we can also do this thing in io.attach by io.attach(server,{cors:{}})
+      credentials: true,
+      origin: FRONTEND_URL
+    }
+ */
   const server = http.createServer(app)
   const io = new Server(server, {
     cors: { // now by this syntax , we don't need io.attatch()
       // we can also do this thing in io.attach by io.attach(server,{cors:{}})
       credentials: true,
-      origin: FRONTEND_URL
+      origin: "*",
+      methods:['GET','POST']
     }
   })
   await subscriber.subscribe(CHANNEL)
