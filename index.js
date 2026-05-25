@@ -1,97 +1,93 @@
 import express from 'express'
 import http from 'http'
-import {Server} from 'socket.io'
+import { Server } from 'socket.io'
 import cors from 'cors'
-import {CHECKBOX_COUNT,CHECKBOX_STATE_KEY} from './constant.js'
-import {publisher,redis,subscriber} from './redis-connection.js'
+import { CHECKBOX_COUNT, CHECKBOX_STATE_KEY, CHANNEL } from './constant.js'
+import { publisher, redis, subscriber } from './redis-connection.js'
 import 'dotenv/config'
+
+
+const FRONTEND_URL = process.env.VITE_FRONTEND_URL
+// console.log(FRONTEND_URL)
 
 // const state = {
 //     checked:new Array(CHECKBOX_COUNT).fill(false)
 // }
 
-async function main(){
-    const PORT = process.env.VITE_PORT
-    
-    const app = express()
-    app.use(cors({
-        credentials:true,
-        origin:[
-            'http://localhost:5173',
-            'http://localhost:5174',
-            'http://localhost:5175'
-        ],
-    }))
+async function main() {
+  const PORT = process.env.VITE_PORT
 
- 
-    app.get('/checkboxes',async(req,res) => {
-        const existingState = await redis.get(CHECKBOX_STATE_KEY)
-        if(existingState){
-            const remoteData = JSON.parse(existingState)
-            return res.json(remoteData)
-        }
-        return res.json({checkboxes:new Array(CHECKBOX_COUNT).fill(false)})
-    })
+  const app = express()
+  app.use(cors({
+    credentials: true,
+    origin: FRONTEND_URL,
+  }))
 
-  const server = http.createServer(app)
-  const io = new Server(server,{
-    cors:{ // now by this syntax , we don't need io.attatch()
-        // we can also do this thing in io.attach by io.attach(server,{cors:{}})
-        credentials:true,
-        origin:['http://localhost:5173',
-        'http://localhost:5174',
-        'http://localhost:5175'
-        ]
-    } 
-  })
-//////////////////////////
-  await subscriber.subscribe('internal:server:checkbox:change')
-  subscriber.on('message',(channel,message) => {
-    if(channel === 'internal:server:checkbox:change'){
-        const {index,isChecked} = JSON.parse(message)
-        io.emit('server:checkbox:change',{index,isChecked})
+
+  app.get('/checkboxes', async (req, res) => {
+    try {
+      // Use getBuffer to fetch all 1 million bits instantly
+      const buffer = await redis.getBuffer(CHECKBOX_STATE_KEY);
+      const base64 = buffer ? buffer.toString('base64') : '';
+
+      return res.json({
+        base64,
+        total: CHECKBOX_COUNT
+      });
+    } catch (error) {
+      console.error('Error fetching checkboxes:', error);
+      return res.status(500).json({ error: 'Failed to fetch checkboxes' });
     }
   })
-///////////////////////
 
-  io.on('connection',(socket) => {
-    console.log(socket.id)
-    socket.on('client:checkbox:change',async({isChecked,index}) => {
-        console.log(isChecked,index);
-        // state.checked[index] = isChecked
-        // socket.broadcast.emit('server:checkbox:change',{isChecked,index})  
-        const existingState = await redis.get(CHECKBOX_STATE_KEY)
-        if(existingState){
-            const remoteData = JSON.parse(existingState)
-            remoteData.checkboxes[index] = isChecked
-            await redis.set(CHECKBOX_STATE_KEY,JSON.stringify(remoteData))
-        }else{
-            const initialState = {
-                checkboxes:new Array(CHECKBOX_COUNT).fill(false)
-            }
-            initialState.checkboxes[index] = isChecked
-            await redis.set(CHECKBOX_STATE_KEY,JSON.stringify(initialState))
-        }
-        publisher.publish('internal:server:checkbox:change',JSON.stringify({index,isChecked}) ) 
-    })
-    // we input channel name in it
+  const server = http.createServer(app)
+  const io = new Server(server, {
+    cors: { // now by this syntax , we don't need io.attatch()
+      // we can also do this thing in io.attach by io.attach(server,{cors:{}})
+      credentials: true,
+      origin: FRONTEND_URL
+    }
   })
-   
-//   io.attach(server);
+  await subscriber.subscribe(CHANNEL)
+  subscriber.on('message', (channel, message) => {
+    if (channel === CHANNEL) {
+      const { index, isChecked } = JSON.parse(message)
+      io.emit('server:checkbox:change', { index, isChecked })
+    }
+  })
+  ///////////////////////
 
-//   io.on('connection',(socket) => {
-//     console.log(socket.id); 
-//     socket.on('client:checkbox:change',({isChecked,index}) => {
-//         socket.emit('server:change',{isChecked,index})        
-//     })
-//   })
+  io.on('connection', (socket) => {
+    console.log(socket.id)
+    socket.on('client:checkbox:change', async ({ isChecked, index }) => {
+      try {
+        // Use lowercase 'setbit' for ioredis
+        await redis.setbit(CHECKBOX_STATE_KEY, index, isChecked ? 1 : 0);
 
-  server.listen(PORT,() => {
-    console.log(`Server is running on http:localhost:${PORT}`);    
+        // Publish to other servers
+        publisher.publish(CHANNEL, JSON.stringify({ index, isChecked }));
+      } catch (error) {
+        console.error('Error updating checkbox:', error);
+        socket.emit('server:error', { error: 'Failed to update checkbox' });
+      }
+    })
+  })
+
+  //   io.attach(server);
+
+  //   io.on('connection',(socket) => {
+  //     console.log(socket.id); 
+  //     socket.on('client:checkbox:change',({isChecked,index}) => {
+  //         socket.emit('server:change',{isChecked,index})        
+  //     })
+  //   })
+
+  server.listen(PORT, () => {
+    console.log(`Server is running on http:localhost:${PORT}`);
   })
 }
 
 main();
 
-// first send an emit ebvent from client when the toggle is done 
+// first send an emit ebvent from client when the toggle is done
 // then handle it on backend and make sure to update the state and then broadcast.emit it and  handle that event in client  
