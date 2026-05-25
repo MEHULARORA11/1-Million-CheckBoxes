@@ -75,7 +75,7 @@ function App() {
   useEffect(() => {
     async function getState() {
       try {
-        const response = await fetch(`${BASE_URL}:${PORT}/checkboxes`);
+        const response = await fetch(`${BASE_URL}/checkboxes`);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
         const data = await response.json();
