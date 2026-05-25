@@ -2,8 +2,8 @@
 import {io} from 'socket.io-client'
 import {CHECKBOX_COUNT} from '../constant.js'
 import { useState,useEffect} from 'react';
-
-const socket = io('http://localhost:8000',{
+ const PORT = import.meta.env.VITE_PORT
+const socket = io(`http://localhost:${PORT}`,{
       transports:['websocket'] // "Don't use polling at all.
 // Directly use WebSocket."
     });
@@ -25,46 +25,46 @@ So only ONE active socket remains.
  * 
  */
 function App(){
+ 
 
  const [checked,setChecked] = useState(new Array(CHECKBOX_COUNT).fill(false))
 
  useEffect(() => {
   
     async function getState(){
-   const data = await fetch('http://localhost:8000/checkboxes')
-   const checkboxes = await data.json()
-  //  console.log(checkboxes)
-  setChecked(() => checkboxes)
+   const data = await fetch(`http://localhost:${PORT}/checkboxes`)
+   const response = await data.json()
+   // response is { checkboxes: [...] }
+   setChecked(response.checkboxes)
 }
 getState()
   
  },[])
 
-// console.log(checked,'mehul');
+ useEffect(() => {
+   socket.on('server:checkbox:change',({isChecked,index}) => {
+     setChecked((prevChecked) => {
+       const newChecked = [...prevChecked]
+       newChecked[index] = isChecked
+       return newChecked
+     })
+   })
 
-// socket.on('client:checkbox:change',({isChecked,index}) => {
-//   console.log(isChecked,index);  
-// })
-
-socket.on('server:checkbox:change',({isChecked,index}) => {
-  let arr = [...checked]
-  setChecked(() => {
-    arr[index] = isChecked
-    return arr
-  })
-})
-   
+   // Cleanup listener on unmount
+   return () => {
+     socket.off('server:checkbox:change')
+   }
+ },[])
 
   function handleChange(index){
  return (e) => {
   const isChecked = e.target.checked
   socket.emit('client:checkbox:change',{isChecked,index})
-  let arr = [...checked]
- setChecked(() => {
-  arr[index] = isChecked
-  return arr
- })
-
+  setChecked((prevChecked) => {
+    const newChecked = [...prevChecked]
+    newChecked[index] = isChecked
+    return newChecked
+  })
  }
   }
 
