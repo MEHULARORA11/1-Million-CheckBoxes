@@ -6,8 +6,6 @@ import './App.css';
 
 const PORT = import.meta.env.VITE_PORT || 8000;
 const BASE_URL = import.meta.env.VITE_BACKEND_URL;
-// console.log(BASE_URL)
-console.log(BASE_URL)
 const socket = io(`${BASE_URL}`, {
   transports: ['websocket']
 });
@@ -77,11 +75,9 @@ function App() {
     async function getState() {
       try {
         const response = await fetch(`${BASE_URL}/checkboxes`);
-        console.log('fetched successfully',response);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
         const data = await response.json();
-        console.log(data)
         if (data.base64 !== undefined) {
           const bytes = base64ToUint8Array(data.base64);
           for (let byteIndex = 0; byteIndex < bytes.length; byteIndex++) {

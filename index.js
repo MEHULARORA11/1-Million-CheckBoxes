@@ -28,7 +28,11 @@ async function main() {
   }
    */
   const app = express()
-  app.use(cors())
+  app.use(cors({
+    credentials:true,
+    origin:FRONTEND_URL,
+    methods:['GET']
+  }))
 
 
   app.get('/checkboxes', async (req, res) => {
@@ -58,7 +62,7 @@ async function main() {
     cors: { // now by this syntax , we don't need io.attatch()
       // we can also do this thing in io.attach by io.attach(server,{cors:{}})
       credentials: true,
-      origin: "*",
+      origin: FRONTEND_URL,
       methods:['GET','POST']
     }
   })
@@ -69,7 +73,7 @@ async function main() {
       io.emit('server:checkbox:change', { index, isChecked })
     }
   })
-  ///////////////////////
+  
 
   io.on('connection', (socket) => {
     console.log(socket.id)
@@ -103,5 +107,3 @@ async function main() {
 
 main();
 
-// first send an emit ebvent from client when the toggle is done
-// then handle it on backend and make sure to update the state and then broadcast.emit it and  handle that event in client  
