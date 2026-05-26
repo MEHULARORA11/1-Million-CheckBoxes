@@ -34,6 +34,10 @@ async function main() {
     methods:['GET']
   }))
 
+ 
+  app.get('/health',(_,res) => {
+    res.status(200).json({message:"good health"})
+  })
 
   app.get('/checkboxes', async (req, res) => {
     try {
