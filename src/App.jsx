@@ -112,8 +112,8 @@ function App() {
   // Callback to handle checkbox changes
   const handleCheckboxChange = useCallback((index, isChecked) => {
     const now = Date.now();
-    if (now - lastToggleTime.current < 5) {
-      setErrorMessage('Please wait 5 seconds before toggling again.');
+    if (now - lastToggleTime.current < 3000) {
+      setErrorMessage('Please wait 3 seconds before toggling again.');
       if (errorTimeoutRef.current) {
         clearTimeout(errorTimeoutRef.current);
       }
