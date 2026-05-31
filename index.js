@@ -78,8 +78,14 @@ async function main() {
     }
   })
   
-
+let userCount = 0;
   io.on('connection', (socket) => {
+    userCount++;
+    io.emit("online:users",userCount)
+    socket.on("disconnect",() => {
+      userCount--;
+      io.emit("online:users",userCount)
+    })
     console.log(socket.id)
     socket.on('client:checkbox:change', async ({ isChecked, index }) => {
       try {
@@ -94,6 +100,7 @@ async function main() {
       }
     })
   })
+  
 
   //   io.attach(server);
 

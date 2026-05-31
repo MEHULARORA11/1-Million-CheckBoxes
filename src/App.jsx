@@ -3,6 +3,11 @@ import { io } from 'socket.io-client';
 import { Grid } from 'react-window';
 import { CHECKBOX_COUNT } from '../constant.js';
 import './App.css';
+import ActiveUsers from '../components/activeUserCounter.jsx';
+
+
+
+
 
 const PORT = import.meta.env.VITE_PORT || 8000;
 const BASE_URL = import.meta.env.VITE_BACKEND_URL;
@@ -54,12 +59,19 @@ const Cell = React.memo(({ columnIndex, rowIndex, style, columnCount, onCheckbox
 Cell.displayName = 'CheckboxCell';
 
 function App() {
+  const [activeUser, setActiveUser] = useState(0);
   const [dataLoaded, setDataLoaded] = useState(false);
   const [tick, setTick] = useState(0); // A tiny integer to force fast visual updates
   const [dimensions, setDimensions] = useState({ width: window.innerWidth, height: window.innerHeight });
   const [errorMessage, setErrorMessage] = useState('');
   const lastToggleTime = useRef(0);
   const errorTimeoutRef = useRef(null);
+
+  function handleUser(count){
+
+  setActiveUser(() => count);
+
+}
 
   // Handle window resize for dynamic grid
   useEffect(() => {
@@ -106,6 +118,9 @@ function App() {
     };
 
     socket.on('server:checkbox:change', handleCheckboxChange);
+    socket.on("online:users",(user) => {
+      handleUser(user)
+    })
     return () => socket.off('server:checkbox:change', handleCheckboxChange);
   }, []);
 
@@ -154,6 +169,7 @@ function App() {
     <div className="app-container">
       <header className="app-header">
         <h1>One Million Checkboxes</h1>
+        <ActiveUsers count={activeUser}/>
         <p className="subtitle">Virtualization ensures seamless scrolling!</p>
       </header>
 
