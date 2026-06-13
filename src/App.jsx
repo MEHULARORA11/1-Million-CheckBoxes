@@ -59,6 +59,7 @@ const Cell = React.memo(({ columnIndex, rowIndex, style, columnCount, onCheckbox
 Cell.displayName = 'CheckboxCell';
 
 function App() {
+  const [allowed,setAllowed] = useState(false)
   const [activeUser, setActiveUser] = useState(0);
   const [dataLoaded, setDataLoaded] = useState(false);
   const [tick, setTick] = useState(0); // A tiny integer to force fast visual updates
@@ -165,8 +166,8 @@ function App() {
     tick // Passing tick forces react-window to update the cells quickly without crashing DevTools!
   }), [columnCount, handleCheckboxChange, tick]);
 
-  return (
-    <div className="app-container">
+  return  (   
+    !(allowed) ? (<h1><div>Website Down For A While</div></h1>) : (<div className="app-container">
       <header className="app-header">
         <h1>One Million Checkboxes</h1>
         <ActiveUsers count={activeUser}/>
@@ -200,8 +201,8 @@ function App() {
           <div style={{ color: 'white', marginTop: '50px' }}>Loading {CHECKBOX_COUNT.toLocaleString()} checkboxes...</div>
         )}
       </div>
-    </div>
-  );
+    </div>))
+  
 }
 
 export default App;
