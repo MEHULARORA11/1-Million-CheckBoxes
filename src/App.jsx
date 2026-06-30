@@ -59,12 +59,27 @@ function HoverTooltip({ hoveredBox, currentUser }) {
 
   const { index, rect, isChecked, loading, user } = hoveredBox;
 
-  // Position above the checkbox
+  // Smart dynamic positioning to prevent screen overflow
+  const tooltipWidth = 210;
+  const tooltipHeight = 90;
+  const centerX = rect.left + rect.width / 2;
+
+  // Vertical placement (above vs below check)
+  const positionAbove = rect.top - tooltipHeight - 12 > 10;
+  const top = positionAbove ? (rect.top - tooltipHeight - 12) : (rect.top + rect.height + 12);
+
+  // Horizontal placement clamped within viewport edges with a safety margin
+  const rawLeft = centerX - tooltipWidth / 2;
+  const left = Math.max(12, Math.min(window.innerWidth - tooltipWidth - 12, rawLeft));
+
+  // Arrow alignment offset pointing directly at the checkbox center
+  const arrowLeft = Math.max(16, Math.min(tooltipWidth - 16, centerX - left));
+
   const style = {
     position: 'absolute',
-    top: `${rect.top - 100}px`,
-    left: `${rect.left + rect.width / 2}px`,
-    transform: 'translateX(-50%)',
+    top: `${top}px`,
+    left: `${left}px`,
+    width: `${tooltipWidth}px`,
     zIndex: 1000,
     pointerEvents: 'none'
   };
@@ -79,8 +94,8 @@ function HoverTooltip({ hoveredBox, currentUser }) {
   const isOwnAuth = isChecked && user && !user.isGuest && currentUser && user.userId === currentUser.id;
 
   return (
-    <div className="custom-tooltip" style={style}>
-      <div className="tooltip-arrow" />
+    <div className={`custom-tooltip ${positionAbove ? 'pos-above' : 'pos-below'}`} style={style}>
+      <div className="tooltip-arrow" style={{ left: `${arrowLeft}px` }} />
       <div className="tooltip-content">
         <div className="tooltip-title">Checkbox #{index + 1}</div>
         {isChecked ? (
@@ -197,6 +212,17 @@ const Cell = React.memo(({ columnIndex, rowIndex, style, columnCount, onCheckbox
     }
   }, [owner, currentUser]);
 
+  // Compute if check is owned by the current authorized user
+  const isOwned = useMemo(() => {
+    if (!owner || owner.isGuest) return false;
+    return currentUser && owner.userId === currentUser.id;
+  }, [owner, currentUser]);
+
+  // Compute if check is owned by a temporary guest
+  const isGuestChecked = useMemo(() => {
+    return owner && owner.isGuest;
+  }, [owner]);
+
   const handleChange = (e) => {
     const nextChecked = e.target.checked;
 
@@ -224,7 +250,7 @@ const Cell = React.memo(({ columnIndex, rowIndex, style, columnCount, onCheckbox
         onChange={handleChange}
         onMouseEnter={(e) => onCheckboxHover(index, e.target, isChecked)}
         onMouseLeave={() => onCheckboxLeave(index)}
-        className={`custom-checkbox ${isLocked ? 'is-locked' : ''} ${isShaking ? 'shake' : ''}`}
+        className={`custom-checkbox ${isLocked ? 'is-locked' : ''} ${isOwned ? 'is-owned' : ''} ${isGuestChecked ? 'is-guest-checked' : ''} ${isShaking ? 'shake' : ''}`}
       />
     </div>
   );
@@ -748,7 +774,7 @@ function App() {
     <div className="app-container">
       <header className="app-header">
         <div className="app-header-main">
-          <h1>One Million Checkboxes</h1>
+          <h1 style={{margin:'auto'}} >One Million Checkboxes</h1>
           
           {user ? (
             <div className="user-profile-badge">
