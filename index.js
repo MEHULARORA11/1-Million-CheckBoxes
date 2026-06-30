@@ -21,6 +21,90 @@ redis.on('error', err => console.error('Redis Error:', err));
 publisher.on('error', err => console.error('Publisher Error:', err));
 subscriber.on('error', err => console.error('Subscriber Error:', err));
 
+// Register the atomic toggleCheckbox Lua script
+redis.defineCommand('toggleCheckbox', {
+  numberOfKeys: 2,
+  lua: `
+    local checkbox_key = KEYS[1]
+    local owner_key = KEYS[2]
+    local index = tonumber(ARGV[1])
+    local is_checked = tonumber(ARGV[2])
+    local user_info_json = ARGV[3]
+    local current_user_id = ARGV[4]
+    local ttl_seconds = tonumber(ARGV[5])
+
+    local current_bit = redis.call('getbit', checkbox_key, index)
+
+    if is_checked == 1 then
+      if current_bit == 1 then
+        local owner_data = redis.call('get', owner_key)
+        if owner_data then
+          local owner = cjson.decode(owner_data)
+          local owner_id = owner.userId or owner.guestSessionId
+          if owner_id == current_user_id then
+            redis.call('set', owner_key, user_info_json)
+            if ttl_seconds > 0 then
+              redis.call('expire', owner_key, ttl_seconds)
+            else
+              redis.call('persist', owner_key)
+            end
+            local click_count = redis.call('get', 'global_click_count')
+            return {1, owner_data, click_count and tonumber(click_count) or 0}
+          else
+            return {0, owner_data, click_count and tonumber(click_count) or 0}
+          end
+        else
+          redis.call('set', owner_key, user_info_json)
+          if ttl_seconds > 0 then
+            redis.call('expire', owner_key, ttl_seconds)
+          else
+            redis.call('persist', owner_key)
+          end
+          local click_count = redis.call('get', 'global_click_count')
+          return {1, user_info_json, click_count and tonumber(click_count) or 0}
+        end
+      else
+        redis.call('setbit', checkbox_key, index, 1)
+        redis.call('set', owner_key, user_info_json)
+        if ttl_seconds > 0 then
+          redis.call('expire', owner_key, ttl_seconds)
+        else
+          redis.call('persist', owner_key)
+        end
+        local click_count = redis.call('incr', 'global_click_count')
+        return {1, user_info_json, tonumber(click_count)}
+      end
+    else
+      if current_bit == 0 then
+        redis.call('del', owner_key)
+        local click_count = redis.call('get', 'global_click_count')
+        return {1, nil, click_count and tonumber(click_count) or 0}
+      else
+        local owner_data = redis.call('get', owner_key)
+        if owner_data then
+          local owner = cjson.decode(owner_data)
+          local owner_id = owner.userId or owner.guestSessionId
+          if owner_id == current_user_id then
+            redis.call('setbit', checkbox_key, index, 0)
+            redis.call('del', owner_key)
+            local click_count = redis.call('incr', 'global_click_count')
+            return {1, owner_data, tonumber(click_count)}
+          else
+            local click_count = redis.call('get', 'global_click_count')
+            return {0, owner_data, click_count and tonumber(click_count) or 0}
+          end
+        else
+          redis.call('setbit', checkbox_key, index, 0)
+          redis.call('del', owner_key)
+          local click_count = redis.call('incr', 'global_click_count')
+          return {1, nil, tonumber(click_count)}
+        end
+      end
+    end
+  `
+});
+
+
 // Normalize frontend URL (strip surrounding quotes and trailing slashes)
 const rawFrontendUrl = process.env.VITE_FRONTEND_URL || 'http://localhost:5173'
 const FRONTEND_URL = rawFrontendUrl.replace(/^['"]|['"]$/g, '').replace(/\/+$/, '')
@@ -54,6 +138,10 @@ async function main() {
   const isProduction = process.env.NODE_ENV === 'production';
 
   const app = express()
+  app.use((req, res, next) => {
+    res.setHeader('Cross-Origin-Opener-Policy', 'same-origin-allow-popups');
+    next();
+  });
   app.use(cors({
     credentials: true,
     origin: FRONTEND_URL,
@@ -117,35 +205,6 @@ async function main() {
     }
   });
 
-  // Mock Sandbox Login
-  app.post('/api/auth/mock', async (req, res) => {
-    try {
-      const { name } = req.body;
-      const username = name?.trim() || 'Guest Developer';
-
-      const user = {
-        id: `mock-${crypto.randomUUID().substring(0, 8)}`,
-        name: username,
-        email: 'sandbox@local.dev',
-        picture: `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(username)}`
-      };
-
-      const sessionToken = crypto.randomUUID();
-      await redis.set(`session:${sessionToken}`, JSON.stringify(user), 'EX', 604800);
-
-      res.cookie('session_token', sessionToken, {
-        httpOnly: true,
-        secure: isProduction,
-        sameSite: isProduction ? 'none' : 'lax',
-        maxAge: 7 * 24 * 60 * 60 * 1000
-      });
-
-      return res.json({ success: true, user });
-    } catch (error) {
-      console.error('Mock Login Error:', error);
-      return res.status(500).json({ error: 'Mock login failed' });
-    }
-  });
 
   // Check Session
   app.get('/api/auth/session', async (req, res) => {
@@ -259,26 +318,47 @@ async function main() {
     }
   });
 
-  // Socket.io Middleware to Authenticate Session Cookie
+  // Socket.io Middleware to Authenticate Session Cookie or Establish Guest Session
   io.use(async (socket, next) => {
     try {
       const cookieHeader = socket.handshake.headers.cookie;
       const cookies = parseCookies(cookieHeader);
       const sessionToken = cookies['session_token'];
       if (!sessionToken) {
-        return next(new Error('Authentication error: No session token'));
+        const guestId = socket.handshake.auth?.guestSessionId || `guest-${socket.id.substring(0, 8)}`;
+        socket.user = {
+          id: guestId,
+          name: 'Guest User',
+          isGuest: true
+        };
+        return next();
       }
 
       const sessionData = await redis.get(`session:${sessionToken}`);
       if (!sessionData) {
-        return next(new Error('Authentication error: Invalid session'));
+        const guestId = socket.handshake.auth?.guestSessionId || `guest-${socket.id.substring(0, 8)}`;
+        socket.user = {
+          id: guestId,
+          name: 'Guest User',
+          isGuest: true
+        };
+        return next();
       }
 
-      socket.user = JSON.parse(sessionData);
+      socket.user = {
+        ...JSON.parse(sessionData),
+        isGuest: false
+      };
       next();
     } catch (error) {
       console.error('Socket authentication failed:', error);
-      next(new Error('Authentication error'));
+      const guestId = socket.handshake.auth?.guestSessionId || `guest-${socket.id.substring(0, 8)}`;
+      socket.user = {
+        id: guestId,
+        name: 'Guest User',
+        isGuest: true
+      };
+      next();
     }
   });
 
@@ -295,26 +375,82 @@ async function main() {
     // Handle Checkbox Change
     socket.on('client:checkbox:change', async ({ isChecked, index }) => {
       try {
-        const pipeline = redis.pipeline();
-        pipeline.setbit(CHECKBOX_STATE_KEY, index, isChecked ? 1 : 0);
-        pipeline.incr('global_click_count');
-
-        if (isChecked) {
-          // Store check info with 5-minute TTL
-          pipeline.set(`checkbox:expiry:${index}`, JSON.stringify({
+        const ownerKey = `checkbox:expiry:${index}`;
+        const currentUserId = socket.user?.id || socket.id;
+        
+        let userInfo = {};
+        let ttlSeconds = 0;
+        
+        if (socket.user && !socket.user.isGuest) {
+          userInfo = {
             name: socket.user.name,
-            picture: socket.user.picture
-          }), 'EX', 300);
+            picture: socket.user.picture,
+            userId: socket.user.id,
+            isGuest: false
+          };
+          ttlSeconds = 0; // Permanent
         } else {
-          // Remove hover info and TTL
-          pipeline.del(`checkbox:expiry:${index}`);
+          userInfo = {
+            name: 'Guest User',
+            guestId: currentUserId.substring(0, 8),
+            guestSessionId: currentUserId, // full session ID for authorization, strip before broadcasting
+            isGuest: true
+          };
+          ttlSeconds = 300; // 5 minutes TTL
         }
 
-        const results = await pipeline.exec();
-        const newClickCount = results[1][1]; // result of incr is the 2nd command
+        const userInfoJson = JSON.stringify(userInfo);
 
-        // Publish event to Redis channel for multi-server sync
-        publisher.publish(CHANNEL, JSON.stringify({ index, isChecked, clickCount: newClickCount }));
+        // Run the Lua script atomically on Redis
+        const [successCode, ownerDataJson, clickCount] = await redis.toggleCheckbox(
+          CHECKBOX_STATE_KEY,
+          ownerKey,
+          index,
+          isChecked ? 1 : 0,
+          userInfoJson,
+          currentUserId,
+          ttlSeconds
+        );
+
+        const success = successCode === 1;
+
+        if (success) {
+          // Strip private guest session ID before publishing
+          let ownerToSend = null;
+          if (isChecked) {
+            ownerToSend = { ...userInfo };
+            delete ownerToSend.guestSessionId;
+          } else if (ownerDataJson) {
+            try {
+              ownerToSend = JSON.parse(ownerDataJson);
+              delete ownerToSend.guestSessionId;
+            } catch (e) {}
+          }
+
+          // Publish event to Redis channel for multi-server sync
+          publisher.publish(CHANNEL, JSON.stringify({
+            index,
+            isChecked,
+            clickCount,
+            owner: ownerToSend
+          }));
+        } else {
+          // Reject action: notify the socket and revert state
+          let currentOwner = null;
+          if (ownerDataJson) {
+            try {
+              currentOwner = JSON.parse(ownerDataJson);
+              delete currentOwner.guestSessionId;
+            } catch (e) {}
+          }
+
+          socket.emit('server:checkbox:rejected', {
+            index,
+            isChecked: !isChecked, // Revert to previous state
+            owner: currentOwner,
+            clickCount
+          });
+        }
       } catch (error) {
         console.error('Error updating checkbox:', error);
         socket.emit('server:error', { error: 'Failed to update checkbox' });
@@ -333,7 +469,26 @@ async function main() {
         const userJson = results[0][1];
         const ttl = results[1][1];
 
+        if (!userJson) {
+          // Self-healing / lazy cleanup: if the bit is 1 but key is missing, clean it
+          const bitVal = await redis.getbit(CHECKBOX_STATE_KEY, index);
+          if (bitVal === 1) {
+            await redis.setbit(CHECKBOX_STATE_KEY, index, 0);
+            publisher.publish(CHANNEL, JSON.stringify({ index, isChecked: false }));
+            socket.emit('server:checkbox:hover', {
+              index,
+              user: null,
+              ttl: 0
+            });
+            return;
+          }
+        }
+
         const user = userJson ? JSON.parse(userJson) : null;
+        if (user) {
+          delete user.guestSessionId; // Strip sensitive guest session ID
+        }
+
         socket.emit('server:checkbox:hover', {
           index,
           user,
