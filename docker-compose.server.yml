@@ -1,0 +1,41 @@
+services:
+  api-service2:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: always
+    deploy:
+      replicas: 1
+    env_file:
+      - .env
+    environment:
+      - PORT=90
+    command: ["node", "index.js"]
+    expose:
+      - 90
+    labels:
+      - 'traefik.enable=true'
+      - 'traefik.http.routers.my-router.rule=Host(`checkboxes.mehularora.dev`)'
+      - 'traefik.http.services.my-router.loadbalancer.server.port=90'
+      - 'traefik.http.routers.my-router.entrypoints=websecure'
+      - 'traefik.docker.network=project-b-network'
+      - 'traefik.http.routers.my-router.tls=true'
+      - 'traefik.http.routers.my-router.tls.certresolver=cert-resolver'
+    networks:
+      - internal-b
+      - project-b-network
+
+  caddy:
+    image: caddy:latest
+    restart: always
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    networks:
+      - project-b-network
+      - internal-b
+
+networks:
+  internal-b:
+    driver: bridge
+  project-b-network:
+    external: true
