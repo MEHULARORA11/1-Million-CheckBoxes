@@ -40,8 +40,8 @@ redis.defineCommand('toggleCheckbox', {
         local owner_data = redis.call('get', owner_key)
         if owner_data then
           local owner = cjson.decode(owner_data)
-          local owner_id = owner.userId or owner.guestSessionId
-          if owner_id == current_user_id then
+          if owner.isGuest == true then
+            -- Allow overwriting/upgrading guest checkboxes
             redis.call('set', owner_key, user_info_json)
             if ttl_seconds > 0 then
               redis.call('expire', owner_key, ttl_seconds)
@@ -49,9 +49,23 @@ redis.defineCommand('toggleCheckbox', {
               redis.call('persist', owner_key)
             end
             local click_count = redis.call('get', 'global_click_count')
-            return {1, owner_data, click_count and tonumber(click_count) or 0}
+            return {1, user_info_json, click_count and tonumber(click_count) or 0}
           else
-            return {0, owner_data, click_count and tonumber(click_count) or 0}
+            -- Authenticated checkbox: only same user can refresh
+            local owner_id = owner.userId
+            if owner_id == current_user_id then
+              redis.call('set', owner_key, user_info_json)
+              if ttl_seconds > 0 then
+                redis.call('expire', owner_key, ttl_seconds)
+              else
+                redis.call('persist', owner_key)
+              end
+              local click_count = redis.call('get', 'global_click_count')
+              return {1, owner_data, click_count and tonumber(click_count) or 0}
+            else
+              local click_count = redis.call('get', 'global_click_count')
+              return {0, owner_data, click_count and tonumber(click_count) or 0}
+            end
           end
         else
           redis.call('set', owner_key, user_info_json)
@@ -83,15 +97,24 @@ redis.defineCommand('toggleCheckbox', {
         local owner_data = redis.call('get', owner_key)
         if owner_data then
           local owner = cjson.decode(owner_data)
-          local owner_id = owner.userId or owner.guestSessionId
-          if owner_id == current_user_id then
+          if owner.isGuest == true then
+            -- Anyone can uncheck guest checkboxes!
             redis.call('setbit', checkbox_key, index, 0)
             redis.call('del', owner_key)
             local click_count = redis.call('incr', 'global_click_count')
             return {1, owner_data, tonumber(click_count)}
           else
-            local click_count = redis.call('get', 'global_click_count')
-            return {0, owner_data, click_count and tonumber(click_count) or 0}
+            -- Authenticated user: only the same owner can uncheck it!
+            local owner_id = owner.userId
+            if owner_id == current_user_id then
+              redis.call('setbit', checkbox_key, index, 0)
+              redis.call('del', owner_key)
+              local click_count = redis.call('incr', 'global_click_count')
+              return {1, owner_data, tonumber(click_count)}
+            else
+              local click_count = redis.call('get', 'global_click_count')
+              return {0, owner_data, click_count and tonumber(click_count) or 0}
+            end
           end
         else
           redis.call('setbit', checkbox_key, index, 0)
@@ -396,7 +419,7 @@ async function main() {
             guestSessionId: currentUserId, // full session ID for authorization, strip before broadcasting
             isGuest: true
           };
-          ttlSeconds = 300; // 5 minutes TTL
+          ttlSeconds = 600; // 10 minutes TTL
         }
 
         const userInfoJson = JSON.stringify(userInfo);

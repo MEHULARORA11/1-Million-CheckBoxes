@@ -75,16 +75,8 @@ function HoverTooltip({ hoveredBox, currentUser }) {
   const avatarUrl = getAvatarUrl(user);
 
   // Compute locked state relative to current user
-  let isLocked = false;
-  if (isChecked && user) {
-    if (user.isGuest) {
-      const guestSessionId = localStorage.getItem('guest_session_id');
-      const shortGuestId = guestSessionId ? guestSessionId.substring(0, 8) : '';
-      isLocked = user.guestId !== shortGuestId;
-    } else {
-      isLocked = !currentUser || user.userId !== currentUser.id;
-    }
-  }
+  const isLocked = isChecked && user && !user.isGuest && (!currentUser || user.userId !== currentUser.id);
+  const isOwnAuth = isChecked && user && !user.isGuest && currentUser && user.userId === currentUser.id;
 
   return (
     <div className="custom-tooltip" style={style}>
@@ -111,9 +103,19 @@ function HoverTooltip({ hoveredBox, currentUser }) {
                 {!user.isGuest && (
                   <div className="tooltip-permanent">Permanent Check</div>
                 )}
-                <div className={`tooltip-badge ${isLocked ? 'locked' : 'owned'}`}>
-                  {isLocked ? '🔒 Locked' : '✨ Yours'}
-                </div>
+                {user.isGuest ? (
+                  <div className="tooltip-badge temporary">
+                    ⚡ Guest
+                  </div>
+                ) : isOwnAuth ? (
+                  <div className="tooltip-badge owned">
+                    ✨ Yours
+                  </div>
+                ) : (
+                  <div className="tooltip-badge locked">
+                    🔒 Locked
+                  </div>
+                )}
               </div>
             </div>
           ) : (
@@ -189,12 +191,11 @@ const Cell = React.memo(({ columnIndex, rowIndex, style, columnCount, onCheckbox
   const isLocked = useMemo(() => {
     if (!owner) return false;
     if (owner.isGuest) {
-      const shortGuestId = guestSessionId ? guestSessionId.substring(0, 8) : '';
-      return owner.guestId !== shortGuestId;
+      return false; // Guest owned checkboxes are NEVER locked! Anyone can uncheck them.
     } else {
       return !currentUser || owner.userId !== currentUser.id;
     }
-  }, [owner, currentUser, guestSessionId]);
+  }, [owner, currentUser]);
 
   const handleChange = (e) => {
     const nextChecked = e.target.checked;
@@ -246,8 +247,25 @@ function App() {
   // References for O(1) listeners and grid size observer
   const checkboxListeners = useRef(new Map());
   const ownerCache = useRef(new Map());
-  const gridContainerRef = useRef(null);
+  const observerRef = useRef(null);
   const [gridHeight, setGridHeight] = useState(450);
+
+  // Callback ref that handles mounting/unmounting of the container dynamically
+  const gridContainerRef = useCallback((node) => {
+    if (observerRef.current) {
+      observerRef.current.disconnect();
+      observerRef.current = null;
+    }
+    if (node !== null) {
+      const observer = new ResizeObserver((entries) => {
+        for (let entry of entries) {
+          setGridHeight(entry.contentRect.height);
+        }
+      });
+      observer.observe(node);
+      observerRef.current = observer;
+    }
+  }, []);
 
   const lastToggleTime = useRef(0);
   const errorTimeoutRef = useRef(null);
@@ -281,19 +299,7 @@ function App() {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // ResizeObserver to calculate the grid container height dynamically
-  useEffect(() => {
-    if (!gridContainerRef.current) return;
-
-    const observer = new ResizeObserver((entries) => {
-      for (let entry of entries) {
-        setGridHeight(entry.contentRect.height);
-      }
-    });
-
-    observer.observe(gridContainerRef.current);
-    return () => observer.disconnect();
-  }, [dataLoaded]);
+  // ResizeObserver handled via callback ref gridContainerRef
 
   // Unified Toast helper
   const showToast = useCallback((message, type = 'info') => {
@@ -494,7 +500,7 @@ function App() {
     if (isChecked && owner) {
       ownerCache.current.set(index, {
         user: owner,
-        ttl: owner.isGuest ? 300 : 0,
+        ttl: owner.isGuest ? 600 : 0,
         fetchedAt: Date.now()
       });
     } else {
@@ -514,7 +520,7 @@ function App() {
           ...prev,
           isChecked,
           user: isChecked ? owner : null,
-          ttl: isChecked ? (owner?.isGuest ? 300 : 0) : 0,
+          ttl: isChecked ? (owner?.isGuest ? 600 : 0) : 0,
           loading: false
         };
       }
@@ -532,7 +538,7 @@ function App() {
     if (isChecked && owner) {
       ownerCache.current.set(index, {
         user: owner,
-        ttl: owner.isGuest ? 300 : 0,
+        ttl: owner.isGuest ? 600 : 0,
         fetchedAt: Date.now()
       });
     } else {
@@ -704,6 +710,10 @@ function App() {
     return () => {
       if (errorTimeoutRef.current) clearTimeout(errorTimeoutRef.current);
       if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
+      if (observerRef.current) {
+        observerRef.current.disconnect();
+        observerRef.current = null;
+      }
     };
   }, []);
 

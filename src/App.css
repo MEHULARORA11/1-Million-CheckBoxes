@@ -998,3 +998,9 @@ body {
     font-size: 1.8rem;
   }
 }
+
+.tooltip-badge.temporary {
+  background: rgba(251, 146, 60, 0.15);
+  color: #fdba74;
+  border: 1.5px solid rgba(251, 146, 60, 0.25);
+}
