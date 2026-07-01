@@ -545,6 +545,7 @@ body {
 }
 
 .custom-checkbox.is-owned:hover {
+  background: linear-gradient(135deg, var(--accent-indigo), var(--accent-purple));
   border-color: #fbbf24; /* yellow-glow on hover */
   transform: scale(1.15);
   box-shadow: 0 0 14px rgba(99, 102, 241, 0.8), 0 0 6px rgba(251, 191, 36, 0.4);
@@ -552,21 +553,21 @@ body {
 
 /* Variant 3: Locked checked (permanent & owned by someone else) */
 .custom-checkbox.is-locked {
-  background-color: #273043;
-  border-color: #3f4e6b;
-  box-shadow: none;
+  background-color: var(--accent-emerald);
+  border-color: var(--accent-emerald);
+  box-shadow: 0 0 10px rgba(16, 185, 129, 0.3);
 }
 
 .custom-checkbox.is-locked::after {
-  border-color: rgba(255, 255, 255, 0.45);
+  border-color: white;
 }
 
 .custom-checkbox.is-locked:hover {
   cursor: not-allowed;
   border-color: var(--accent-rose);
-  background-color: rgba(244, 63, 94, 0.1);
-  box-shadow: 0 0 10px rgba(244, 63, 94, 0.4);
-  transform: scale(1);
+  background-color: #34d399; /* Maintain solid bright green on hover */
+  box-shadow: 0 0 12px rgba(244, 63, 94, 0.6); /* Red warning glow */
+  transform: scale(1.1);
 }
 
 /* Variant 4: Standard default checks (when owner cache is loading/empty) */
@@ -575,6 +576,12 @@ body {
   border-color: var(--accent-emerald);
   box-shadow: 0 0 10px rgba(16, 185, 129, 0.3);
   animation: pop 0.25s ease-out forwards;
+}
+
+.custom-checkbox:checked:not(.is-guest-checked):not(.is-owned):not(.is-locked):hover {
+  background-color: #34d399; /* Maintain solid bright green on hover */
+  border-color: #34d399;
+  box-shadow: 0 0 12px rgba(52, 211, 153, 0.5);
 }
 
 /* Animations */

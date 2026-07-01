@@ -45,6 +45,7 @@ redis.defineCommand('toggleCheckbox', {
     local user_info_json = ARGV[3]
     local current_user_id = ARGV[4]
     local ttl_seconds = tonumber(ARGV[5])
+    local current_time = tonumber(ARGV[6])
 
     local current_bit = redis.call('getbit', checkbox_key, index)
 
@@ -58,8 +59,10 @@ redis.defineCommand('toggleCheckbox', {
             redis.call('set', owner_key, user_info_json)
             if ttl_seconds > 0 then
               redis.call('expire', owner_key, ttl_seconds)
+              redis.call('zadd', 'guest_checkbox_expiries', current_time + (ttl_seconds * 1000), index)
             else
               redis.call('persist', owner_key)
+              redis.call('zrem', 'guest_checkbox_expiries', index)
             end
             local click_count = redis.call('get', 'global_click_count')
             return {1, user_info_json, click_count and tonumber(click_count) or 0}
@@ -70,8 +73,10 @@ redis.defineCommand('toggleCheckbox', {
               redis.call('set', owner_key, user_info_json)
               if ttl_seconds > 0 then
                 redis.call('expire', owner_key, ttl_seconds)
+                redis.call('zadd', 'guest_checkbox_expiries', current_time + (ttl_seconds * 1000), index)
               else
                 redis.call('persist', owner_key)
+                redis.call('zrem', 'guest_checkbox_expiries', index)
               end
               local click_count = redis.call('get', 'global_click_count')
               return {1, owner_data, click_count and tonumber(click_count) or 0}
@@ -84,8 +89,10 @@ redis.defineCommand('toggleCheckbox', {
           redis.call('set', owner_key, user_info_json)
           if ttl_seconds > 0 then
             redis.call('expire', owner_key, ttl_seconds)
+            redis.call('zadd', 'guest_checkbox_expiries', current_time + (ttl_seconds * 1000), index)
           else
             redis.call('persist', owner_key)
+            redis.call('zrem', 'guest_checkbox_expiries', index)
           end
           local click_count = redis.call('get', 'global_click_count')
           return {1, user_info_json, click_count and tonumber(click_count) or 0}
@@ -95,8 +102,10 @@ redis.defineCommand('toggleCheckbox', {
         redis.call('set', owner_key, user_info_json)
         if ttl_seconds > 0 then
           redis.call('expire', owner_key, ttl_seconds)
+          redis.call('zadd', 'guest_checkbox_expiries', current_time + (ttl_seconds * 1000), index)
         else
           redis.call('persist', owner_key)
+          redis.call('zrem', 'guest_checkbox_expiries', index)
         end
         local click_count = redis.call('incr', 'global_click_count')
         return {1, user_info_json, tonumber(click_count)}
@@ -104,6 +113,7 @@ redis.defineCommand('toggleCheckbox', {
     else
       if current_bit == 0 then
         redis.call('del', owner_key)
+        redis.call('zrem', 'guest_checkbox_expiries', index)
         local click_count = redis.call('get', 'global_click_count')
         return {1, nil, click_count and tonumber(click_count) or 0}
       else
@@ -114,6 +124,7 @@ redis.defineCommand('toggleCheckbox', {
             -- Anyone can uncheck guest checkboxes!
             redis.call('setbit', checkbox_key, index, 0)
             redis.call('del', owner_key)
+            redis.call('zrem', 'guest_checkbox_expiries', index)
             local click_count = redis.call('incr', 'global_click_count')
             return {1, owner_data, tonumber(click_count)}
           else
@@ -122,6 +133,7 @@ redis.defineCommand('toggleCheckbox', {
             if owner_id == current_user_id then
               redis.call('setbit', checkbox_key, index, 0)
               redis.call('del', owner_key)
+              redis.call('zrem', 'guest_checkbox_expiries', index)
               local click_count = redis.call('incr', 'global_click_count')
               return {1, owner_data, tonumber(click_count)}
             else
@@ -132,6 +144,7 @@ redis.defineCommand('toggleCheckbox', {
         else
           redis.call('setbit', checkbox_key, index, 0)
           redis.call('del', owner_key)
+          redis.call('zrem', 'guest_checkbox_expiries', index)
           local click_count = redis.call('incr', 'global_click_count')
           return {1, nil, tonumber(click_count)}
         end
@@ -439,7 +452,8 @@ async function main() {
           isChecked ? 1 : 0,
           userInfoJson,
           currentUserId,
-          ttlSeconds
+          ttlSeconds,
+          Date.now()
         );
 
         const success = successCode === 1;
@@ -524,6 +538,36 @@ async function main() {
       }
     });
   })
+
+  // Active background sweeper for guest checkbox expirations (runs every 1 second)
+  setInterval(async () => {
+    try {
+      const now = Date.now();
+      // Atomically query and remove expired elements from the sorted set
+      const expiredIndices = await redis.eval(`
+        local expired = redis.call('zrangebyscore', KEYS[1], 0, ARGV[1])
+        if #expired > 0 then
+          redis.call('zremrangebyscore', KEYS[1], 0, ARGV[1])
+        end
+        return expired
+      `, 1, 'guest_checkbox_expiries', now);
+
+      if (expiredIndices && expiredIndices.length > 0) {
+        for (const indexStr of expiredIndices) {
+          const index = parseInt(indexStr, 10);
+          if (!isNaN(index)) {
+            const oldVal = await redis.setbit(CHECKBOX_STATE_KEY, index, 0);
+            await redis.del(`checkbox:expiry:${index}`);
+            if (oldVal === 1) {
+              publisher.publish(CHANNEL, JSON.stringify({ index, isChecked: false }));
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Error in guest checkbox expiration sweeper:', err);
+    }
+  }, 1000);
 
   server.listen(PORT, () => {
     console.log(`Server is running on http://localhost:${PORT}`);

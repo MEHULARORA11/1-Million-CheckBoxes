@@ -188,11 +188,25 @@ const Cell = React.memo(({ columnIndex, rowIndex, style, columnCount, onCheckbox
 
     // Sync initial states (resolves react-window recycling bugs)
     const initiallyChecked = globalCheckedState[index] === 1;
-    setIsChecked(initiallyChecked);
     if (initiallyChecked) {
       const cached = ownerCache?.current?.get(index);
-      setOwner(cached ? cached.user : null);
+      if (cached && cached.user && cached.user.isGuest) {
+        const elapsed = Math.floor((Date.now() - cached.fetchedAt) / 1000);
+        if (elapsed >= cached.ttl) {
+          globalCheckedState[index] = 0;
+          ownerCache.current.delete(index);
+          setIsChecked(false);
+          setOwner(null);
+        } else {
+          setIsChecked(true);
+          setOwner(cached.user);
+        }
+      } else {
+        setIsChecked(true);
+        setOwner(cached ? cached.user : null);
+      }
     } else {
+      setIsChecked(false);
       setOwner(null);
     }
 
@@ -206,6 +220,32 @@ const Cell = React.memo(({ columnIndex, rowIndex, style, columnCount, onCheckbox
       }
     };
   }, [index, checkboxListeners, ownerCache]);
+
+  // Client-side timer to uncheck guest checkboxes when their TTL expires
+  useEffect(() => {
+    if (!isChecked || !owner || !owner.isGuest) return;
+
+    const cached = ownerCache?.current?.get(index);
+    if (!cached) return;
+
+    const elapsed = Math.floor((Date.now() - cached.fetchedAt) / 1000);
+    const timeLeft = cached.ttl - elapsed;
+
+    if (timeLeft <= 0) {
+      setIsChecked(false);
+      setOwner(null);
+      globalCheckedState[index] = 0;
+      ownerCache.current.delete(index);
+    } else {
+      const timer = setTimeout(() => {
+        setIsChecked(false);
+        setOwner(null);
+        globalCheckedState[index] = 0;
+        ownerCache.current.delete(index);
+      }, timeLeft * 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [isChecked, owner, index, ownerCache]);
 
   // Compute lock status relative to user
   const isLocked = useMemo(() => {
@@ -233,10 +273,20 @@ const Cell = React.memo(({ columnIndex, rowIndex, style, columnCount, onCheckbox
 
     // Client-side Guard Check: if locked, block action and trigger shake immediately
     if (isLocked) {
+      e.target.checked = isChecked; // Instantly revert DOM checked state to avoid visual flickering
       setIsShaking(true);
       setTimeout(() => setIsShaking(false), 500);
       const ownerName = owner.isGuest ? `Guest (${owner.guestId})` : owner.name;
       onCheckboxChange(index, isChecked, true, ownerName); // Notify parent of rejection
+      return;
+    }
+
+    // If unchecking a checkbox whose owner is not yet cached (unknown owner),
+    // we don't know if it is locked, so we should NOT optimistically uncheck it.
+    // We send it to the server and let the server approve/reject it.
+    if (!nextChecked && !owner) {
+      e.target.checked = isChecked; // Instantly revert DOM checked state to avoid visual flickering
+      onCheckboxChange(index, nextChecked, false);
       return;
     }
 
