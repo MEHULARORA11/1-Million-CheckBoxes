@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { io } from 'socket.io-client';
 import { Grid } from 'react-window';
-import { CHECKBOX_COUNT } from '../constant.js';
+import { CHECKBOX_COUNT, GUEST_TTL } from '../constant.js';
 import './App.css';
 import ActiveUsers from '../components/activeUserCounter.jsx';
 import GlobalClickCounter from '../components/globalClickCounter.jsx';
@@ -168,7 +168,9 @@ const Cell = React.memo(({ columnIndex, rowIndex, style, columnCount, onCheckbox
     // Subscribes cell to targeted change updates
     const listener = ({ isChecked: nextChecked, owner: nextOwner, shake }) => {
       setIsChecked(nextChecked);
-      if (nextOwner !== undefined) {
+      if (!nextChecked) {
+        setOwner(null);
+      } else if (nextOwner !== undefined) {
         setOwner(nextOwner);
       }
       if (shake) {
@@ -184,11 +186,14 @@ const Cell = React.memo(({ columnIndex, rowIndex, style, columnCount, onCheckbox
     }
     listeners.add(listener);
 
-    // Sync initial states
-    setIsChecked(globalCheckedState[index] === 1);
-    const cached = ownerCache?.current?.get(index);
-    if (cached) {
-      setOwner(cached.user);
+    // Sync initial states (resolves react-window recycling bugs)
+    const initiallyChecked = globalCheckedState[index] === 1;
+    setIsChecked(initiallyChecked);
+    if (initiallyChecked) {
+      const cached = ownerCache?.current?.get(index);
+      setOwner(cached ? cached.user : null);
+    } else {
+      setOwner(null);
     }
 
     return () => {
@@ -236,8 +241,39 @@ const Cell = React.memo(({ columnIndex, rowIndex, style, columnCount, onCheckbox
     }
 
     // Optimistic Update
+    let optimisticOwner = null;
+    if (nextChecked) {
+      if (currentUser) {
+        optimisticOwner = {
+          name: currentUser.name,
+          picture: currentUser.picture,
+          userId: currentUser.id,
+          isGuest: false
+        };
+      } else {
+        optimisticOwner = {
+          name: 'Guest User',
+          guestId: guestSessionId.substring(0, 8),
+          isGuest: true
+        };
+      }
+    }
+
+    // Update global state and cache optimistically
     globalCheckedState[index] = nextChecked ? 1 : 0;
     setIsChecked(nextChecked);
+    setOwner(optimisticOwner);
+
+    if (nextChecked) {
+      ownerCache.current.set(index, {
+        user: optimisticOwner,
+        ttl: optimisticOwner.isGuest ? GUEST_TTL : 0,
+        fetchedAt: Date.now()
+      });
+    } else {
+      ownerCache.current.delete(index);
+    }
+
     onCheckboxChange(index, nextChecked, false);
   };
 
@@ -250,7 +286,7 @@ const Cell = React.memo(({ columnIndex, rowIndex, style, columnCount, onCheckbox
         onChange={handleChange}
         onMouseEnter={(e) => onCheckboxHover(index, e.target, isChecked)}
         onMouseLeave={() => onCheckboxLeave(index)}
-        className={`custom-checkbox ${isLocked ? 'is-locked' : ''} ${isOwned ? 'is-owned' : ''} ${isGuestChecked ? 'is-guest-checked' : ''} ${isShaking ? 'shake' : ''}`}
+        className={`custom-checkbox ${isChecked && isLocked ? 'is-locked' : ''} ${isChecked && isOwned ? 'is-owned' : ''} ${isChecked && isGuestChecked ? 'is-guest-checked' : ''} ${isShaking ? 'shake' : ''}`}
       />
     </div>
   );
@@ -526,7 +562,7 @@ function App() {
     if (isChecked && owner) {
       ownerCache.current.set(index, {
         user: owner,
-        ttl: owner.isGuest ? 600 : 0,
+        ttl: owner.isGuest ? GUEST_TTL : 0,
         fetchedAt: Date.now()
       });
     } else {
@@ -546,7 +582,7 @@ function App() {
           ...prev,
           isChecked,
           user: isChecked ? owner : null,
-          ttl: isChecked ? (owner?.isGuest ? 600 : 0) : 0,
+          ttl: isChecked ? (owner?.isGuest ? GUEST_TTL : 0) : 0,
           loading: false
         };
       }
@@ -564,7 +600,7 @@ function App() {
     if (isChecked && owner) {
       ownerCache.current.set(index, {
         user: owner,
-        ttl: owner.isGuest ? 600 : 0,
+        ttl: owner.isGuest ? GUEST_TTL : 0,
         fetchedAt: Date.now()
       });
     } else {
@@ -829,7 +865,7 @@ function App() {
             <span className="auth-promo-badge">Guest Session</span>
             <h2>Claim Permanent Checkboxes ⚡</h2>
             <p>
-              Your check flips currently reset and unlock after <strong>5 minutes</strong>. Sign in with Google to protect your checks permanently!
+              Your check flips currently reset and unlock after <strong>3 minutes</strong>. Sign in with Google to protect your checks permanently!
             </p>
           </div>
           

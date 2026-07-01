@@ -5,7 +5,7 @@ import cors from 'cors'
 import cookieParser from 'cookie-parser'
 import crypto from 'crypto'
 import { OAuth2Client } from 'google-auth-library'
-import { CHECKBOX_COUNT, CHECKBOX_STATE_KEY, CHANNEL } from './constant.js'
+import { CHECKBOX_COUNT, CHECKBOX_STATE_KEY, CHANNEL, GUEST_TTL } from './constant.js'
 import dotenv from 'dotenv'
 import { fileURLToPath } from 'url'
 import { dirname, resolve } from 'path'
@@ -14,12 +14,25 @@ const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
 dotenv.config({ path: resolve(__dirname, '.env') })
 
-// Import redis connection after loading env
 import { publisher, redis, subscriber } from './redis-connection.js'
 
 redis.on('error', err => console.error('Redis Error:', err));
 publisher.on('error', err => console.error('Publisher Error:', err));
 subscriber.on('error', err => console.error('Subscriber Error:', err));
+
+async function enableKeyspaceNotifications() {
+  try {
+    await redis.config('SET', 'notify-keyspace-events', 'Ex');
+    console.log('Redis Keyspace Notifications enabled.');
+  } catch (error) {
+    console.warn('Could not run CONFIG SET notify-keyspace-events Ex. Make sure expiry notifications are enabled manually.', error);
+  }
+}
+
+redis.on('ready', enableKeyspaceNotifications);
+if (redis.status === 'ready') {
+  enableKeyspaceNotifications();
+}
 
 // Register the atomic toggleCheckbox Lua script
 redis.defineCommand('toggleCheckbox', {
@@ -302,13 +315,7 @@ async function main() {
     }
   })
 
-  // Configure Redis Keyspace Notifications for TTL expiry
-  try {
-    await redis.config('SET', 'notify-keyspace-events', 'Ex');
-    console.log('Redis Keyspace Notifications enabled.');
-  } catch (error) {
-    console.warn('Could not run CONFIG SET notify-keyspace-events Ex. Make sure expiry notifications are enabled manually.', error);
-  }
+  // Valkey Keyspace Notifications are configured at connection ready handler
 
   // Subscribe to internal checkbox sync channel & database expired events
   const dbIndex = redis.options.db || 0;
@@ -333,8 +340,8 @@ async function main() {
           }
         }
       } else if (channel === CHANNEL) {
-        const { index, isChecked, clickCount } = JSON.parse(message);
-        io.emit('server:checkbox:change', { index, isChecked, clickCount });
+        const { index, isChecked, clickCount, owner } = JSON.parse(message);
+        io.emit('server:checkbox:change', { index, isChecked, clickCount, owner });
       }
     } catch (error) {
       console.error('Subscriber Message Error:', error);
@@ -419,7 +426,7 @@ async function main() {
             guestSessionId: currentUserId, // full session ID for authorization, strip before broadcasting
             isGuest: true
           };
-          ttlSeconds = 600; // 10 minutes TTL
+          ttlSeconds = GUEST_TTL;
         }
 
         const userInfoJson = JSON.stringify(userInfo);
@@ -438,16 +445,11 @@ async function main() {
         const success = successCode === 1;
 
         if (success) {
-          // Strip private guest session ID before publishing
+          // Strip private guest session ID before broadcasting
           let ownerToSend = null;
           if (isChecked) {
             ownerToSend = { ...userInfo };
             delete ownerToSend.guestSessionId;
-          } else if (ownerDataJson) {
-            try {
-              ownerToSend = JSON.parse(ownerDataJson);
-              delete ownerToSend.guestSessionId;
-            } catch (e) {}
           }
 
           // Publish event to Redis channel for multi-server sync
